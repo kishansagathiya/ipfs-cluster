@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/ipfs/ipfs-cluster/api"
+	"github.com/ipfs/ipfs-cluster/metrics"
+	"go.opencensus.io/stats"
+	"go.opencensus.io/trace"
 
 	rpc "github.com/hsanjuan/go-libp2p-gorpc"
 	cid "github.com/ipfs/go-cid"
@@ -625,8 +628,12 @@ func (ipfs *Connector) ID() (api.IPFSID, error) {
 // Pin performs a pin request against the configured IPFS
 // daemon.
 func (ipfs *Connector) Pin(ctx context.Context, hash *cid.Cid, recursive bool) error {
+	ctx, span := trace.StartSpan(ctx, "pin")
+	defer span.End()
+
 	ctx, cancel := context.WithTimeout(ctx, ipfs.config.PinTimeout)
 	defer cancel()
+
 	pinStatus, err := ipfs.PinLsCid(ctx, hash)
 	if err != nil {
 		return err
@@ -644,10 +651,11 @@ func (ipfs *Connector) Pin(ctx context.Context, hash *cid.Cid, recursive bool) e
 
 		path := fmt.Sprintf("pin/add?arg=%s&recursive=%t", hash, recursive)
 		_, err = ipfs.postCtx(ctx, path)
-		if err == nil {
-			logger.Info("IPFS Pin request succeeded: ", hash)
+		if err != nil {
+			return err
 		}
-		return err
+		logger.Info("IPFS Pin request succeeded: ", hash)
+		stats.Record(ctx, metrics.PinCountMetric.M(1))
 	}
 	logger.Debug("IPFS object is already pinned: ", hash)
 	return nil
@@ -665,10 +673,11 @@ func (ipfs *Connector) Unpin(ctx context.Context, hash *cid.Cid) error {
 	if pinStatus.IsPinned() {
 		path := fmt.Sprintf("pin/rm?arg=%s", hash)
 		_, err := ipfs.postCtx(ctx, path)
-		if err == nil {
-			logger.Info("IPFS Unpin request succeeded:", hash)
+		if err != nil {
+			return err
 		}
-		return err
+		logger.Info("IPFS Unpin request succeeded:", hash)
+		stats.Record(ctx, metrics.PinCountMetric.M(-1))
 	}
 
 	logger.Debug("IPFS object is already unpinned: ", hash)
